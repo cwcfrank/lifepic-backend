@@ -1,0 +1,22 @@
+name: Sync Parking Data
+
+on:
+  schedule:
+    # 每 3 小時同步一次，符合 TDX 免費額度（每月約 2,880 次）
+    - cron: "0 */3 * * *"
+  workflow_dispatch: # 允許手動觸發
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync Six Major Cities (六都)
+        run: |
+          curl -X POST "${{ secrets.API_URL }}/api/sync/trigger" \
+            -H "X-API-Key: ${{ secrets.SYNC_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"cities": ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"]}'
+
+      - name: Log sync result
+        run: |
+          echo "Sync triggered at $(date)"
