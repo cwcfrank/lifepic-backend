@@ -2,8 +2,8 @@ name: Sync Parking Data
 
 on:
   schedule:
-    # 每 3 小時同步一次，符合 TDX 免費額度（每月約 2,880 次）
-    - cron: "0 */3 * * *"
+    # 每 12 小時同步一次（00:00 和 12:00 UTC），符合 TDX 免費額度
+    - cron: "0 0,12 * * *"
   workflow_dispatch: # 允許手動觸發
 
 jobs:
