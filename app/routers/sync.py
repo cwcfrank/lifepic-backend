@@ -398,3 +398,18 @@ async def get_geocode_status(
             (has_coords / total * 100) if total > 0 else 0, 1
         ),
     }
+
+
+@router.get("/geocode/test")
+async def test_geocoding(
+    address: str,
+    city: str = ""
+):
+    """
+    Test geocoding for a specific address.
+    Returns raw Google Maps API response.
+    Accessible without API key for debugging (be careful in production).
+    """
+    from app.services.geocoding import get_geocoding_service
+    service = get_geocoding_service()
+    return await service.get_raw_response(address, city)

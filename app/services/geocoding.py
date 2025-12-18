@@ -21,8 +21,18 @@ class GeocodingService:
         Geocode an address to get latitude and longitude.
         Returns (latitude, longitude) or None if not found.
         """
+        data = await self.get_raw_response(address, city)
+        if data and data.get("status") == "OK" and data.get("results"):
+            location = data["results"][0]["geometry"]["location"]
+            return (location["lat"], location["lng"])
+        return None
+
+    async def get_raw_response(
+        self, address: str, city: str = ""
+    ) -> Optional[dict]:
+        """Get raw response from Google Maps API for debugging."""
         if not self.settings.google_maps_api_key:
-            return None
+            return {"status": "ERROR", "error_message": "No API Key"}
 
         # Build search query
         query = address if address else ""
@@ -32,7 +42,7 @@ class GeocodingService:
             query = f"{query}, Taiwan"
 
         if not query.strip():
-            return None
+            return {"status": "INVALID_REQUEST", "error_message": "Empty address"}
 
         params = {
             "address": query,
@@ -48,17 +58,11 @@ class GeocodingService:
                     params=params,
                     timeout=10.0,
                 )
-                response.raise_for_status()
-                data = response.json()
+                # Don't raise for status, we want to see 403/400 bodies
+                return response.json()
 
-                if data.get("status") == "OK" and data.get("results"):
-                    location = data["results"][0]["geometry"]["location"]
-                    return (location["lat"], location["lng"])
-
-                return None
-
-        except Exception:
-            return None
+        except Exception as e:
+            return {"status": "EXCEPTION", "error_message": str(e)}
 
     async def geocode_by_name(
         self, name: str, city: str = ""
