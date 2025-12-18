@@ -11,12 +11,14 @@ from sqlalchemy.dialects.postgresql import insert
 from app.database import get_db
 from app.config import get_settings
 from app.models.parking import ParkingLot, SyncStatus
+from app.models.charging import ChargingStation
 from app.schemas.parking import (
     SyncTriggerRequest,
     SyncStatusResponse,
     SyncResultResponse,
 )
 from app.services.tdx_parking import get_tdx_parking_service, SUPPORTED_CITIES
+from app.services.tdx_charging import get_tdx_charging_service
 
 router = APIRouter(prefix="/api/sync", tags=["Sync"])
 
@@ -183,3 +185,98 @@ async def get_sync_status(
         )
         for s in statuses
     ]
+
+
+@router.post("/charging", response_model=SyncResultResponse)
+async def trigger_charging_sync(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """
+    Trigger charging station synchronization from TDX API.
+    Requires X-API-Key header for authentication.
+    """
+    charging_service = get_tdx_charging_service()
+
+    try:
+        # Fetch charging station data
+        stations = await charging_service.get_charging_stations()
+        availability = await charging_service.get_charging_availability()
+
+        # Create availability lookup map
+        availability_map = {
+            item.get("StationID"): item
+            for item in availability
+            if item.get("StationID")
+        }
+
+        # Process and upsert charging stations
+        records_synced = 0
+        for station_data in stations:
+            parsed = charging_service.parse_charging_station(station_data)
+            parsed = charging_service.merge_availability(parsed, availability_map)
+
+            if not parsed["station_id"]:
+                continue
+
+            # Upsert charging station
+            stmt = insert(ChargingStation).values(
+                station_id=parsed["station_id"],
+                name=parsed["name"],
+                address=parsed.get("address"),
+                city=parsed.get("city"),
+                latitude=parsed.get("latitude"),
+                longitude=parsed.get("longitude"),
+                operator_name=parsed.get("operator_name"),
+                phone=parsed.get("phone"),
+                is_24h=parsed.get("is_24h"),
+                business_hours=parsed.get("business_hours"),
+                total_chargers=parsed.get("total_chargers"),
+                available_chargers=parsed.get("available_chargers"),
+                charger_types=parsed.get("charger_types"),
+                fee_description=parsed.get("fee_description"),
+                parking_fee=parsed.get("parking_fee"),
+                data_updated_at=parsed.get("data_updated_at"),
+                updated_at=datetime.utcnow(),
+            ).on_conflict_do_update(
+                index_elements=["station_id"],
+                set_={
+                    "name": parsed["name"],
+                    "address": parsed.get("address"),
+                    "city": parsed.get("city"),
+                    "latitude": parsed.get("latitude"),
+                    "longitude": parsed.get("longitude"),
+                    "operator_name": parsed.get("operator_name"),
+                    "phone": parsed.get("phone"),
+                    "is_24h": parsed.get("is_24h"),
+                    "business_hours": parsed.get("business_hours"),
+                    "total_chargers": parsed.get("total_chargers"),
+                    "available_chargers": parsed.get("available_chargers"),
+                    "charger_types": parsed.get("charger_types"),
+                    "fee_description": parsed.get("fee_description"),
+                    "parking_fee": parsed.get("parking_fee"),
+                    "data_updated_at": parsed.get("data_updated_at"),
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+            await db.execute(stmt)
+            records_synced += 1
+
+        await db.commit()
+
+        return SyncResultResponse(
+            success=True,
+            message=f"Synced {records_synced} charging stations",
+            synced_cities=["All"],
+            total_records=records_synced,
+        )
+
+    except Exception as e:
+        await db.rollback()
+        return SyncResultResponse(
+            success=False,
+            message=f"Charging sync failed: {str(e)}",
+            synced_cities=[],
+            total_records=0,
+        )
+

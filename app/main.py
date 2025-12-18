@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import init_db
-from app.routers import parking, sync
+from app.routers import parking, sync, charging
 
 
 @asynccontextmanager
@@ -22,8 +22,8 @@ settings = get_settings()
 
 app = FastAPI(
     title=settings.app_name,
-    description="停車場資料中台服務 - 整合 TDX 運輸資料流通服務",
-    version="1.0.0",
+    description="停車場與充電站資料中台服務 - 整合 TDX 運輸資料流通服務",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -38,6 +38,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(parking.router)
+app.include_router(charging.router)
 app.include_router(sync.router)
 
 
@@ -47,7 +48,7 @@ async def root():
     return {
         "name": settings.app_name,
         "status": "healthy",
-        "version": "1.0.0",
+        "version": "1.1.0",
     }
 
 
