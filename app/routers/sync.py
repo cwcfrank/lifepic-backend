@@ -6,7 +6,7 @@ from typing import Optional, List
 from datetime import datetime
 from fastapi import APIRouter, Depends, Header, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.dialects.postgresql import insert
 from app.database import get_db
 from app.config import get_settings
@@ -324,10 +324,11 @@ async def geocode_charging_stations(
     geocoding_service = get_geocoding_service()
 
     # Find stations missing coordinates
+    # Order by random to avoid getting stuck on failed items
     query = select(ChargingStation).where(
         (ChargingStation.latitude.is_(None)) |
         (ChargingStation.longitude.is_(None))
-    ).limit(limit)
+    ).order_by(func.random()).limit(limit)
 
     result = await db.execute(query)
     stations = result.scalars().all()
