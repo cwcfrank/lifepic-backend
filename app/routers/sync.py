@@ -189,94 +189,113 @@ async def get_sync_status(
 
 @router.post("/charging", response_model=SyncResultResponse)
 async def trigger_charging_sync(
+    request: SyncTriggerRequest = None,
     db: AsyncSession = Depends(get_db),
     _: str = Depends(verify_api_key),
 ):
     """
     Trigger charging station synchronization from TDX API.
+    Syncs charging stations for specified cities (or six major cities by default).
     Requires X-API-Key header for authentication.
     """
+    from app.services.tdx_charging import SUPPORTED_CITIES_EV
+
     charging_service = get_tdx_charging_service()
 
-    try:
-        # Fetch charging station data
-        stations = await charging_service.get_charging_stations()
-        availability = await charging_service.get_charging_availability()
+    # Default to six major cities if not specified
+    cities_to_sync = (
+        request.cities if request and request.cities
+        else ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"]
+    )
 
-        # Create availability lookup map
-        availability_map = {
-            item.get("StationID"): item
-            for item in availability
-            if item.get("StationID")
-        }
-
-        # Process and upsert charging stations
-        records_synced = 0
-        for station_data in stations:
-            parsed = charging_service.parse_charging_station(station_data)
-            parsed = charging_service.merge_availability(parsed, availability_map)
-
-            if not parsed["station_id"]:
-                continue
-
-            # Upsert charging station
-            stmt = insert(ChargingStation).values(
-                station_id=parsed["station_id"],
-                name=parsed["name"],
-                address=parsed.get("address"),
-                city=parsed.get("city"),
-                latitude=parsed.get("latitude"),
-                longitude=parsed.get("longitude"),
-                operator_name=parsed.get("operator_name"),
-                phone=parsed.get("phone"),
-                is_24h=parsed.get("is_24h"),
-                business_hours=parsed.get("business_hours"),
-                total_chargers=parsed.get("total_chargers"),
-                available_chargers=parsed.get("available_chargers"),
-                charger_types=parsed.get("charger_types"),
-                fee_description=parsed.get("fee_description"),
-                parking_fee=parsed.get("parking_fee"),
-                data_updated_at=parsed.get("data_updated_at"),
-                updated_at=datetime.utcnow(),
-            ).on_conflict_do_update(
-                index_elements=["station_id"],
-                set_={
-                    "name": parsed["name"],
-                    "address": parsed.get("address"),
-                    "city": parsed.get("city"),
-                    "latitude": parsed.get("latitude"),
-                    "longitude": parsed.get("longitude"),
-                    "operator_name": parsed.get("operator_name"),
-                    "phone": parsed.get("phone"),
-                    "is_24h": parsed.get("is_24h"),
-                    "business_hours": parsed.get("business_hours"),
-                    "total_chargers": parsed.get("total_chargers"),
-                    "available_chargers": parsed.get("available_chargers"),
-                    "charger_types": parsed.get("charger_types"),
-                    "fee_description": parsed.get("fee_description"),
-                    "parking_fee": parsed.get("parking_fee"),
-                    "data_updated_at": parsed.get("data_updated_at"),
-                    "updated_at": datetime.utcnow(),
-                }
-            )
-            await db.execute(stmt)
-            records_synced += 1
-
-        await db.commit()
-
-        return SyncResultResponse(
-            success=True,
-            message=f"Synced {records_synced} charging stations",
-            synced_cities=["All"],
-            total_records=records_synced,
+    # Validate city codes
+    invalid_cities = [c for c in cities_to_sync if c not in SUPPORTED_CITIES_EV]
+    if invalid_cities:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid city codes: {invalid_cities}"
         )
 
-    except Exception as e:
-        await db.rollback()
-        return SyncResultResponse(
-            success=False,
-            message=f"Charging sync failed: {str(e)}",
-            synced_cities=[],
-            total_records=0,
-        )
+    total_records = 0
+    synced_cities = []
 
+    for city in cities_to_sync:
+        try:
+            # Fetch charging station data for this city
+            stations = await charging_service.get_charging_stations_by_city(city)
+            status_data = await charging_service.get_connector_status_by_city(city)
+
+            # Create status lookup map by station ID
+            status_map = {
+                item.get("StationID"): item
+                for item in status_data
+                if item.get("StationID")
+            }
+
+            # Process and upsert charging stations
+            records_synced = 0
+            for station_data in stations:
+                parsed = charging_service.parse_charging_station(station_data, city)
+                parsed = charging_service.merge_availability(parsed, status_map)
+
+                if not parsed["station_id"]:
+                    continue
+
+                # Upsert charging station
+                stmt = insert(ChargingStation).values(
+                    station_id=parsed["station_id"],
+                    name=parsed["name"],
+                    address=parsed.get("address"),
+                    city=parsed.get("city"),
+                    latitude=parsed.get("latitude"),
+                    longitude=parsed.get("longitude"),
+                    operator_name=parsed.get("operator_name"),
+                    phone=parsed.get("phone"),
+                    is_24h=parsed.get("is_24h"),
+                    business_hours=parsed.get("business_hours"),
+                    total_chargers=parsed.get("total_chargers"),
+                    available_chargers=parsed.get("available_chargers"),
+                    charger_types=parsed.get("charger_types"),
+                    fee_description=parsed.get("fee_description"),
+                    parking_fee=parsed.get("parking_fee"),
+                    data_updated_at=parsed.get("data_updated_at"),
+                    updated_at=datetime.utcnow(),
+                ).on_conflict_do_update(
+                    index_elements=["station_id"],
+                    set_={
+                        "name": parsed["name"],
+                        "address": parsed.get("address"),
+                        "city": parsed.get("city"),
+                        "latitude": parsed.get("latitude"),
+                        "longitude": parsed.get("longitude"),
+                        "operator_name": parsed.get("operator_name"),
+                        "phone": parsed.get("phone"),
+                        "is_24h": parsed.get("is_24h"),
+                        "business_hours": parsed.get("business_hours"),
+                        "total_chargers": parsed.get("total_chargers"),
+                        "available_chargers": parsed.get("available_chargers"),
+                        "charger_types": parsed.get("charger_types"),
+                        "fee_description": parsed.get("fee_description"),
+                        "parking_fee": parsed.get("parking_fee"),
+                        "data_updated_at": parsed.get("data_updated_at"),
+                        "updated_at": datetime.utcnow(),
+                    }
+                )
+                await db.execute(stmt)
+                records_synced += 1
+
+            await db.commit()
+            total_records += records_synced
+            synced_cities.append(city)
+
+        except Exception as e:
+            # Log error but continue with other cities
+            print(f"Error syncing charging for {city}: {e}")
+            await db.rollback()
+
+    return SyncResultResponse(
+        success=len(synced_cities) > 0,
+        message=f"Synced {len(synced_cities)} cities with {total_records} charging stations",
+        synced_cities=synced_cities,
+        total_records=total_records,
+    )

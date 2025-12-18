@@ -9,6 +9,33 @@ from app.config import get_settings
 from app.services.tdx_auth import get_tdx_auth_service
 
 
+# Supported cities for EV charging data (same as parking)
+SUPPORTED_CITIES_EV = {
+    "Taipei": "臺北市",
+    "NewTaipei": "新北市",
+    "Taoyuan": "桃園市",
+    "Taichung": "臺中市",
+    "Tainan": "臺南市",
+    "Kaohsiung": "高雄市",
+    "Keelung": "基隆市",
+    "Hsinchu": "新竹市",
+    "HsinchuCounty": "新竹縣",
+    "MiaoliCounty": "苗栗縣",
+    "ChanghuaCounty": "彰化縣",
+    "NantouCounty": "南投縣",
+    "YunlinCounty": "雲林縣",
+    "ChiayiCounty": "嘉義縣",
+    "Chiayi": "嘉義市",
+    "PingtungCounty": "屏東縣",
+    "YilanCounty": "宜蘭縣",
+    "HualienCounty": "花蓮縣",
+    "TaitungCounty": "臺東縣",
+    "PenghuCounty": "澎湖縣",
+    "KinmenCounty": "金門縣",
+    "LienchiangCounty": "連江縣",
+}
+
+
 class TDXChargingService:
     """Service for fetching charging station data from TDX API."""
 
@@ -36,46 +63,62 @@ class TDXChargingService:
             response.raise_for_status()
             return response.json()
 
-    async def get_charging_stations(self) -> List[Dict[str, Any]]:
+    async def get_charging_stations_by_city(
+        self, city: str
+    ) -> List[Dict[str, Any]]:
         """
-        Get all charging station data.
-        Endpoint: /v1/CityEVCharging/ChargingStation
+        Get charging station data for a specific city.
+        Endpoint: /v1/EV/Station/City/{City}
         """
-        endpoint = "/v1/CityEVCharging/ChargingStation"
+        endpoint = f"/v1/EV/Station/City/{city}"
         params = {"$format": "JSON"}
 
         try:
             data = await self._make_request(endpoint, params)
             if isinstance(data, list):
                 return data
-            return data.get("ChargingStations", [])
+            # Try different response keys
+            return (
+                data.get("Stations", [])
+                or data.get("EVStations", [])
+                or data.get("ChargingStations", [])
+                or []
+            )
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return []
             raise
 
-    async def get_charging_availability(self) -> List[Dict[str, Any]]:
+    async def get_connector_status_by_city(
+        self, city: str
+    ) -> List[Dict[str, Any]]:
         """
-        Get charging station availability.
-        Endpoint: /v1/CityEVCharging/ChargingStationAvailability
+        Get charging connector live status for a specific city.
+        Endpoint: /v1/EV/ConnectorLiveStatus/City/{City}
         """
-        endpoint = "/v1/CityEVCharging/ChargingStationAvailability"
+        endpoint = f"/v1/EV/ConnectorLiveStatus/City/{city}"
         params = {"$format": "JSON"}
 
         try:
             data = await self._make_request(endpoint, params)
             if isinstance(data, list):
                 return data
-            return data.get("ChargingStationAvailabilities", [])
+            return (
+                data.get("ConnectorLiveStatuses", [])
+                or data.get("Statuses", [])
+                or []
+            )
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return []
             raise
 
-    def parse_charging_station(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Parse TDX charging station data into our model format."""
+    def parse_charging_station(
+        self, data: Dict[str, Any], city: str
+    ) -> Dict[str, Any]:
+        """Parse TDX EV charging station data into our model format."""
         # Extract position
-        position = data.get("StationPosition", {})
+        position = data.get("Position", {})
         lat = position.get("PositionLat")
         lng = position.get("PositionLon")
 
@@ -83,53 +126,53 @@ class TDXChargingService:
         name = data.get("StationName", {})
         if isinstance(name, dict):
             name = name.get("Zh_tw") or name.get("En") or "Unknown"
+        elif not name:
+            name = "Unknown"
 
         # Extract address
         address = data.get("Address", "")
         if isinstance(address, dict):
             address = address.get("Zh_tw") or address.get("En") or ""
 
-        # Extract city from address or location
-        city = data.get("City", "")
-        if isinstance(city, dict):
-            city = city.get("Zh_tw") or city.get("En") or ""
-
         # Extract operator
         operator = data.get("OperatorName", "")
         if isinstance(operator, dict):
             operator = operator.get("Zh_tw") or operator.get("En") or ""
 
-        # Extract charger types
-        chargers = data.get("Chargers", [])
-        charger_types = []
-        total_chargers = 0
-        for charger in chargers:
-            charger_type = charger.get("ChargerType", "")
-            count = charger.get("Count", 1)
-            total_chargers += count
-            if charger_type:
-                charger_types.append(f"{charger_type}x{count}")
+        # Extract connector info
+        connectors = data.get("Connectors", [])
+        connector_types = []
+        total_connectors = 0
+        for conn in connectors:
+            conn_type = conn.get("ConnectorType", "")
+            if conn_type:
+                connector_types.append(conn_type)
+            total_connectors += 1
 
         # Extract fee info
-        fee_desc = data.get("FeeDescription", "")
+        fee_desc = data.get("ChargingFee", "")
         if isinstance(fee_desc, dict):
             fee_desc = fee_desc.get("Zh_tw") or fee_desc.get("En") or ""
+
+        parking_fee = data.get("ParkingFee", "")
+        if isinstance(parking_fee, dict):
+            parking_fee = parking_fee.get("Zh_tw") or parking_fee.get("En") or ""
 
         return {
             "station_id": data.get("StationID", ""),
             "name": name,
             "address": address,
-            "city": city if city else None,
+            "city": city,
             "latitude": lat,
             "longitude": lng,
             "operator_name": operator if operator else None,
             "phone": data.get("Phone"),
-            "is_24h": data.get("Is24H"),
-            "business_hours": data.get("BusinessHours"),
-            "total_chargers": total_chargers if total_chargers > 0 else None,
-            "charger_types": ", ".join(charger_types) if charger_types else None,
+            "is_24h": data.get("Is24Hours"),
+            "business_hours": data.get("ServiceTime"),
+            "total_chargers": total_connectors if total_connectors > 0 else None,
+            "charger_types": ", ".join(set(connector_types)) if connector_types else None,
             "fee_description": fee_desc if fee_desc else None,
-            "parking_fee": data.get("ParkingFee"),
+            "parking_fee": parking_fee if parking_fee else None,
         }
 
     def merge_availability(
@@ -141,12 +184,15 @@ class TDXChargingService:
         station_id = station["station_id"]
         if station_id in availability_map:
             avail = availability_map[station_id]
-            station["available_chargers"] = avail.get("AvailableChargers")
-
-            # Parse update time and convert to naive UTC
-            update_time = (
-                avail.get("DataCollectTime") or avail.get("SrcUpdateTime")
+            # Count available connectors
+            available = sum(
+                1 for s in avail.get("Connectors", [])
+                if s.get("Status") == "Available"
             )
+            station["available_chargers"] = available
+
+            # Parse update time
+            update_time = avail.get("UpdateTime") or avail.get("SrcUpdateTime")
             if update_time:
                 try:
                     dt = datetime.fromisoformat(
