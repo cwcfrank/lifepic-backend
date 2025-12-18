@@ -299,3 +299,101 @@ async def trigger_charging_sync(
         synced_cities=synced_cities,
         total_records=total_records,
     )
+
+
+@router.post("/geocode", response_model=SyncResultResponse)
+async def geocode_charging_stations(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(verify_api_key),
+):
+    """
+    Geocode charging stations missing latitude/longitude.
+    Uses Google Maps Geocoding API.
+    Requires X-API-Key header and GOOGLE_MAPS_API_KEY env var.
+    """
+    from app.services.geocoding import get_geocoding_service
+
+    settings = get_settings()
+    if not settings.google_maps_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="GOOGLE_MAPS_API_KEY not configured"
+        )
+
+    geocoding_service = get_geocoding_service()
+
+    # Find stations missing coordinates
+    query = select(ChargingStation).where(
+        (ChargingStation.latitude.is_(None)) |
+        (ChargingStation.longitude.is_(None))
+    ).limit(limit)
+
+    result = await db.execute(query)
+    stations = result.scalars().all()
+
+    geocoded_count = 0
+    failed_count = 0
+
+    for station in stations:
+        # Try geocoding by address first
+        coords = None
+        if station.address:
+            coords = await geocoding_service.geocode_address(
+                station.address, station.city or ""
+            )
+
+        # Fallback to name-based geocoding
+        if not coords and station.name:
+            coords = await geocoding_service.geocode_by_name(
+                station.name, station.city or ""
+            )
+
+        if coords:
+            station.latitude = coords[0]
+            station.longitude = coords[1]
+            geocoded_count += 1
+        else:
+            failed_count += 1
+
+    await db.commit()
+
+    return SyncResultResponse(
+        success=geocoded_count > 0,
+        message=f"Geocoded {geocoded_count} stations, {failed_count} failed",
+        synced_cities=[],
+        total_records=geocoded_count,
+    )
+
+
+@router.get("/geocode/status")
+async def get_geocode_status(
+    db: AsyncSession = Depends(get_db),
+):
+    """Get count of charging stations missing coordinates."""
+    from sqlalchemy import func
+
+    # Count total stations
+    total_query = select(func.count(ChargingStation.id))
+    total_result = await db.execute(total_query)
+    total = total_result.scalar() or 0
+
+    # Count stations missing coordinates
+    missing_query = select(func.count(ChargingStation.id)).where(
+        (ChargingStation.latitude.is_(None)) |
+        (ChargingStation.longitude.is_(None))
+    )
+    missing_result = await db.execute(missing_query)
+    missing = missing_result.scalar() or 0
+
+    # Count stations with coordinates
+    has_coords = total - missing
+
+    return {
+        "total_stations": total,
+        "missing_coordinates": missing,
+        "has_coordinates": has_coords,
+        "percentage_complete": round(
+            (has_coords / total * 100) if total > 0 else 0, 1
+        ),
+    }

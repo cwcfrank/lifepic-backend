@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     tdx_auth_url: str = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
     tdx_api_base_url: str = "https://tdx.transportdata.tw/api/basic"
     
+    # Google Maps API
+    google_maps_api_key: str = ""
+
     # Sync API
     sync_api_key: str = ""
     
