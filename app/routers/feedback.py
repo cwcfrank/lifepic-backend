@@ -79,10 +79,10 @@ def send_email(description: str, email: Optional[str], image_urls: List[str]):
     recipients = os.environ["SMTP_RECIPIENTS"].split(",")
     
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = "AI停車助手問題回報"
-    msg["From"] = f"AI停車助手 <{smtp_user}>"
+    msg["Subject"] = "ParkRadar Feedback"
+    msg["From"] = smtp_user  # Use plain email address for Zoho
     msg["To"] = ", ".join(recipients)
-    
+
     # Build HTML email content with embedded images
     images_html = ""
     if image_urls:
@@ -90,7 +90,7 @@ def send_email(description: str, email: Optional[str], image_urls: List[str]):
             f'<p><a href="{url}"><img src="{url}" style="max-width:400px; margin:10px 0;"/></a></p>'
             for url in image_urls
         ])
-    
+
     html = f"""
     <html>
     <body>
@@ -104,13 +104,19 @@ def send_email(description: str, email: Optional[str], image_urls: List[str]):
     </body>
     </html>
     """
-    
+
     msg.attach(MIMEText(html, "html"))
-    
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        server.starttls()
-        server.login(smtp_user, smtp_pass)
-        server.sendmail(smtp_user, recipients, msg.as_string())
+
+    # Use SSL for port 465, STARTTLS for port 587
+    if smtp_port == 465:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, recipients, msg.as_string())
+    else:
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, recipients, msg.as_string())
 
 
 @router.post("/feedback")
