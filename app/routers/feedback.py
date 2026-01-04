@@ -7,7 +7,7 @@ import base64
 import json
 import uuid
 import smtplib
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -29,30 +29,38 @@ def get_gcs_client():
 
 async def upload_to_gcs(file: UploadFile) -> str:
     """
-    Upload a file to GCS and return its public URL.
-    
+    Upload a file to GCS and return a signed URL.
+
     Args:
         file: The uploaded file from the request.
-        
+
     Returns:
-        The public URL of the uploaded file.
+        A signed URL valid for 7 days.
     """
-    client = get_gcs_client()
+    json_str = base64.b64decode(os.environ["GCS_SERVICE_ACCOUNT_JSON"]).decode()
+    info = json.loads(json_str)
+    credentials = service_account.Credentials.from_service_account_info(info)
+    client = storage.Client(credentials=credentials)
     bucket = client.bucket(os.environ["GCS_BUCKET_NAME"])
-    
+
     # Generate unique filename with date prefix
     ext = file.filename.split(".")[-1] if file.filename and "." in file.filename else "jpg"
     date_prefix = datetime.now().strftime("%Y-%m-%d")
     blob_name = f"feedback-images/{date_prefix}/{uuid.uuid4()}.{ext}"
-    
+
     blob = bucket.blob(blob_name)
     content = await file.read()
     blob.upload_from_string(content, content_type=file.content_type or "image/jpeg")
-    
-    # Make the blob publicly readable
-    blob.make_public()
-    
-    return blob.public_url
+
+    # Generate signed URL valid for 7 days (for email viewing)
+    signed_url = blob.generate_signed_url(
+        version="v4",
+        expiration=timedelta(days=7),
+        method="GET",
+        credentials=credentials,
+    )
+
+    return signed_url
 
 
 def send_email(description: str, email: Optional[str], image_urls: List[str]):
