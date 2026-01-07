@@ -7,7 +7,7 @@ import base64
 import json
 import uuid
 import smtplib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -99,7 +99,7 @@ def send_email(description: str, email: Optional[str], image_urls: List[str]):
         <p>{description.replace(chr(10), '<br>')}</p>
         <br>
         <p><strong>用戶 Email：</strong> {email if email else '未提供'}</p>
-        <p><strong>發送時間：</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <p><strong>發送時間：</strong> {datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S')} (台北時間)</p>
         {images_html}
     </body>
     </html>
