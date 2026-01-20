@@ -29,13 +29,13 @@ def get_gcs_client():
 
 async def upload_to_gcs(file: UploadFile) -> str:
     """
-    Upload a file to GCS and return a signed URL.
+    Upload a file to GCS and return a public URL.
 
     Args:
         file: The uploaded file from the request.
 
     Returns:
-        A signed URL valid for 7 days.
+        A public URL for the uploaded image.
     """
     json_str = base64.b64decode(os.environ["GCS_SERVICE_ACCOUNT_JSON"]).decode()
     info = json.loads(json_str)
@@ -52,15 +52,11 @@ async def upload_to_gcs(file: UploadFile) -> str:
     content = await file.read()
     blob.upload_from_string(content, content_type=file.content_type or "image/jpeg")
 
-    # Generate signed URL valid for 7 days (for email viewing)
-    signed_url = blob.generate_signed_url(
-        version="v4",
-        expiration=timedelta(days=7),
-        method="GET",
-        credentials=credentials,
-    )
+    # Make the blob publicly readable
+    blob.make_public()
 
-    return signed_url
+    # Return public URL
+    return blob.public_url
 
 
 def send_email(description: str, email: Optional[str], image_urls: List[str]):
@@ -79,7 +75,7 @@ def send_email(description: str, email: Optional[str], image_urls: List[str]):
     recipients = os.environ["SMTP_RECIPIENTS"].split(",")
     
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = "ParkRadar Feedback"
+    msg["Subject"] = "LifePic Feedback"
     msg["From"] = smtp_user  # Use plain email address for Zoho
     msg["To"] = ", ".join(recipients)
 
